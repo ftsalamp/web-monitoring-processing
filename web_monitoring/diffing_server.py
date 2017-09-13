@@ -4,6 +4,7 @@ import hashlib
 from importlib import import_module
 import inspect
 import json
+import os
 import tornado.gen
 import tornado.httpclient
 import tornado.ioloop
@@ -62,13 +63,18 @@ class DiffHandler(tornado.web.RequestHandler):
 
         # Special case for local files, for dev/testing.
         if a.startswith('file://') and b.startswith('file://'):
-            headers = {'Content-Type': 'application/html; charset=UTF-8'}
-            with open(a[7:], 'rb') as f:
-                body = f.read()
-                res_a = MockResponse(a, body, headers)
-            with open(b[7:], 'rb') as f:
-                body = f.read()
-                res_b = MockResponse(b, body, headers)
+            if os.get('WEB_MONITORING_APP_ENV') in ('development', 'testing'):
+                headers = {'Content-Type': 'application/html; charset=UTF-8'}
+                with open(a[7:], 'rb') as f:
+                    body = f.read()
+                    res_a = MockResponse(a, body, headers)
+                with open(b[7:], 'rb') as f:
+                    body = f.read()
+                    res_b = MockResponse(b, body, headers)
+            else:
+                self.send_error(
+                    500, reason=("Local files can only be used in development "
+                                 "or testing environment."))
         else:
             # Fetch server response for URLs a and b.
             res_a, res_b = yield [client.fetch(a), client.fetch(b)]
