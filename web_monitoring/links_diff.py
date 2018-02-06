@@ -31,10 +31,11 @@ def links_diff(a_text, b_text):
 
     matcher = SequenceMatcher(a=a_links, b=b_links)
     opcodes = matcher.get_opcodes()
+    diff = list(_assemble_diff(a_links, b_links, opcodes))
 
     return {
-        'change_count': _count_changes(opcodes),
-        'diff': _assemble_diff(a_links, b_links, opcodes),
+        'change_count': _count_changes(diff),
+        'diff': diff,
         'a_parsed': a_soup,
         'b_parsed': b_soup
     }
@@ -48,7 +49,7 @@ def links_diff_json(a_text, b_text):
     diff = links_diff(a_text, b_text)
     return {
         'change_count': diff['change_count'],
-        'diff': list(diff['diff'])
+        'diff': diff['diff']
     }
 
 
@@ -226,7 +227,7 @@ def _get_link_text(link):
 
 
 def _count_changes(opcodes):
-    return len([operation for operation in opcodes if operation[0] != 'equal'])
+    return len([operation for operation in opcodes if operation[0] != 0])
 
 
 def _assemble_diff(a, b, opcodes):
