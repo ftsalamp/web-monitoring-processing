@@ -146,10 +146,10 @@ def insert_style(html, css):
 
 def html_tree_diff(a_text, b_text):
     css = """
-diffins {text-decoration : none; background-color: #d4fcbc;}
-diffdel {text-decoration : none; background-color: #fbb6c2;}
-diffins * {text-decoration : none; background-color: #d4fcbc;}
-diffdel * {text-decoration : none; background-color: #fbb6c2;}
+diffins {text-decoration : none; background-color: #1d9efd;}
+diffdel {text-decoration : none; background-color: #f7f417;}
+diffins * {text-decoration : none; background-color: #1d9efd;}
+diffdel * {text-decoration : none; background-color: #f7f417;}
     """
     d = htmltreediff.diff(a_text, b_text,
                           ins_tag='diffins',del_tag='diffdel',
@@ -160,10 +160,10 @@ diffdel * {text-decoration : none; background-color: #fbb6c2;}
 
 def html_differ(a_text, b_text):
     css = """
-.htmldiffer_insert {text-decoration : none; background-color: #d4fcbc;}
-.htmldiffer_delete {text-decoration : none; background-color: #fbb6c2;}
-.htmldiffer_insert * {text-decoration : none; background-color: #d4fcbc;}
-.htmldiffer_delete * {text-decoration : none; background-color: #fbb6c2;}
+.htmldiffer_insert {text-decoration : none; background-color: #1d9efd;}
+.htmldiffer_delete {text-decoration : none; background-color: #f7f417;}
+.htmldiffer_insert * {text-decoration : none; background-color: #1d9efd;}
+.htmldiffer_delete * {text-decoration : none; background-color: #f7f417;}
     """
     d = HTMLDiffer(a_text, b_text).combined_diff
     # TODO Count number of changes.
