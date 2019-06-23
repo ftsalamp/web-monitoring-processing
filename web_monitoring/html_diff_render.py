@@ -189,8 +189,131 @@ EMPTY_HTML = '''<html>
 MAX_SPACERS = 2500
 
 
+class WaybackUrlComparator:
+    """
+    This class implements the comparator that correctly compares URLs of
+    Wayback mementos' links. Those links have been rewritten to point to
+    another memento in Wayback instead of the original URL so, it ignores the
+    information added to the URL and compares the original URLs.
+
+    Attributes
+    ----------
+    matcher : pattern
+        The regular expression that cleans up the URL resource.
+
+    Methods
+    -------
+    compare(url_a, url_b)
+        Returns a boolean value indicating if url_a is equal to url_b
+        considering that the two URLs for the Internet Archive’s Wayback
+        Machine are the same as long as they refer to the same original URL,
+        even if they refer to captures at different points in time. For
+        example, these URLs would be considered the same:
+          http://web.archive.org/web/20190525141538/https://www.noaa.gov/
+          http://web.archive.org/web/20181231224558/https://www.noaa.gov/
+        Because they both refer to captures of `https://www.noaa.gov/`.
+    """
+    matcher = re.compile(r'web/\d{14}(im_|js_|cs_)?/(https?://)?(www.)?')
+
+    def compare(self, url_a, url_b):
+        match_a = self.matcher.search(url_a)
+        match_b = self.matcher.search(url_b)
+        if match_a and match_b:
+            url_a = url_a[match_a.end():]
+            url_b = url_b[match_b.end():]
+            return url_a == url_b
+        return url_a == url_b
+
+
+class WaybackUkUrlComparator(WaybackUrlComparator):
+    """
+    This class implements the comparator that correctly compares URLs of
+    UK Web Archive mementos' links. Those links have been rewritten to point to
+    another memento in Wayback instead of the original URL, so it ignores the
+    information added to the URL and compares the original URLs.
+
+    Attributes
+    ----------
+    matcher : pattern
+        The regular expression that cleans up the URL resource.
+
+    Methods
+    -------
+    compare(url_a, url_b)
+        This inherited method from WaybackUrlComparator returns a boolean
+        value indicating if url_a is equal to url_b considering that the two
+        URLs for the UK Web Archive are the same as long as they refer to the
+        same original URL, even if they refer to captures at different points
+        in time. For example, these URLs would be considered the same:
+          https://www.webarchive.org.uk/wayback/en/archive/20190525141538/https://www.example.gov/
+          https://www.webarchive.org.uk/wayback/en/archive/20181231224558/https://www.example.gov/
+        Because they both refer to captures of `https://www.example.gov/`.
+    """
+    matcher = re.compile(r'https://www\.webarchive\.org\.uk/wayback/en/archive/\d{14}(mp_|im_)?/(https?://)?(www.)?')
+
+
+class ServletSessionUrlComparator:
+    """
+    This class implements the comparator that ignores the Servlet session IDs
+    that are kept in the URL instead of cookies.
+
+    Attributes
+    ----------
+    matcher : pattern
+        The regular expression that cleans up the URL resource.
+
+    Methods
+    -------
+    compare(url_a, url_b)
+        Returns a boolean value indicating if url_a is equal to url_b
+        considering that the two URLs might contain a jsession id in any
+        position inside them and they are the same as long as they refer to
+        the same original URL, even if they have different jsession ids. For
+        example, these URLs would be considered the same:
+          https://www.ncdc.noaa.gov/homr/api;jsessionid=A2DECB66D2648BFED11FC721FC3043A1
+          https://www.ncdc.noaa.gov/homr/api;jsessionid=B3EFDC88E3759CGFE22GD832GD4154B2
+        Because they both refer to `https://www.ncdc.noaa.gov/homr/api`.
+    """
+    matcher = re.compile(r';jsessionid=[^;]+')
+
+    def compare(self, url_a, url_b):
+        match_a = self.matcher.sub('', url_a)
+        match_b = self.matcher.sub('', url_b)
+        return match_a == match_b
+
+
+class StrictUrlRule:
+    """
+    The StrictUrlRule class represents the the mapping between the
+    various Comparator classes and the keywords used to match them. This
+    mapping is done inside the CLASS_RULES dictionary.
+    """
+    CLASS_RULES = {'WBM': WaybackUrlComparator,
+                   'jsessionid': ServletSessionUrlComparator,
+                   'UK_WBM': WaybackUkUrlComparator}
+
+    @classmethod
+    def compare_array(cls, element_array, other_array, comparator):
+        for url_a in element_array:
+            for url_b in other_array:
+                if comparator:
+                    if comparator.compare(url_a, url_b):
+                        return True
+                elif url_a == url_b:
+                    return True
+        return False
+
+    @classmethod
+    def get_comparator(cls, mode):
+        try:
+            return cls.CLASS_RULES[mode]()
+        except KeyError:
+            raise KeyError(f'{mode} is an invalid strict URL rule.')
+
+
 def html_diff_render(a_text, b_text, a_headers=None, b_headers=None,
-                     include='combined', content_type_options='normal'):
+                     include='combined', content_type_options='normal',
+                     strict_urls=None):
     """
     HTML Diff for rendering. This is focused on visually highlighting portions
     of a page’s text that have been changed. It does not do much to show how
@@ -243,6 +366,9 @@ def html_diff_render(a_text, b_text, a_headers=None, b_headers=None,
         - `nocheck` ignores the `Content-Type` header but still sniffs.
         - `nosniff` uses the `Content-Type` header but does not sniff.
         - `ignore` doesn’t do any checking at all.
+    strict_urls : string
+        The value of this parameter indicates whether the tag elements and href
+        elements should use special rules when checking their equality.
 
     Example
     -------
@@ -273,7 +399,11 @@ def html_diff_render(a_text, b_text, a_headers=None, b_headers=None,
     soup_old = _cleanup_document_structure(soup_old)
     soup_new = _cleanup_document_structure(soup_new)
 
-    metadata, diff_bodies = diff_elements(soup_old.body, soup_new.body, include)
+    comparator = None
+    if strict_urls is not None:
+        comparator = StrictUrlRule.get_comparator(strict_urls)
+
+    metadata, diff_bodies = diff_elements(soup_old.body, soup_new.body, comparator, include)
     results = metadata.copy()
 
     for diff_type, diff_body in diff_bodies.items():
@@ -375,7 +505,7 @@ def _diff_title(old, new):
     return ''.join(map(_html_for_dmp_operation, diff))
 
 
-def diff_elements(old, new, include='all'):
+def diff_elements(old, new, comparator, include='all'):
     if not old:
         old = BeautifulSoup().new_tag('div')
     if not new:
@@ -388,7 +518,7 @@ def diff_elements(old, new, include='all'):
         return result_element
 
     results = {}
-    metadata, raw_diffs = _htmldiff(str(old), str(new), include)
+    metadata, raw_diffs = _htmldiff(str(old), str(new), comparator, include)
     for diff_type, diff in raw_diffs.items():
         element = diff_type == 'deletions' and old or new
         results[diff_type] = fill_element(element, diff)
@@ -396,12 +526,12 @@ def diff_elements(old, new, include='all'):
     return metadata, results
 
 
-def _htmldiff(old, new, include='all'):
+def _htmldiff(old, new, comparator, include='all'):
     """
     A slightly customized version of htmldiff that uses different tokens.
     """
-    old_tokens = tokenize(old)
-    new_tokens = tokenize(new)
+    old_tokens = tokenize(old, comparator)
+    new_tokens = tokenize(new, comparator)
     # old_tokens = [_customize_token(token) for token in old_tokens]
     # new_tokens = [_customize_token(token) for token in new_tokens]
     old_tokens = _limit_spacers(_customize_tokens(old_tokens), MAX_SPACERS)
@@ -530,15 +660,16 @@ class tag_token(DiffToken):
     the <img> tag, which takes up visible space just like a word but
     is only represented in a document by a tag.  """
 
-    def __new__(cls, tag, data, html_repr, pre_tags=None,
+    def __new__(cls, tag, data, html_repr, comparator, pre_tags=None,
                 post_tags=None, trailing_whitespace=""):
         obj = DiffToken.__new__(cls, "%s: %s" % (type, data),
-                            pre_tags=pre_tags,
-                            post_tags=post_tags,
-                            trailing_whitespace=trailing_whitespace)
+                                pre_tags=pre_tags,
+                                post_tags=post_tags,
+                                trailing_whitespace=trailing_whitespace)
         obj.tag = tag
         obj.data = data
         obj.html_repr = html_repr
+        obj.comparator = comparator
         return obj
 
     def __repr__(self):
@@ -549,14 +680,37 @@ class tag_token(DiffToken):
             self.pre_tags,
             self.post_tags,
             self.trailing_whitespace)
+
     def html(self):
         return self.html_repr
+
 
 class href_token(DiffToken):
     """ Represents the href in an anchor tag.  Unlike other words, we only
     show the href when it changes.  """
 
     hide_when_equal = True
+
+    def __new__(cls, href, comparator, pre_tags=None,
+                post_tags=None, trailing_whitespace=""):
+        obj = DiffToken.__new__(cls, text=href,
+                                pre_tags=pre_tags,
+                                post_tags=post_tags,
+                                trailing_whitespace=trailing_whitespace)
+        obj.comparator = comparator
+        return obj
+
+    def __eq__(self, other):
+        # This equality check aims to apply specific rules to the contents of
+        # the href element solving false positive cases
+        if not isinstance(other, href_token):
+            return False
+        if self.comparator:
+            return self.comparator.compare(str(self), str(other))
+        return super().__eq__(other)
+
+    def __hash__(self):
+        return super().__hash__()
 
     def html(self):
         return ' Link: %s' % self
@@ -566,7 +720,7 @@ class UndiffableContentToken(DiffToken):
     pass
 
 
-def tokenize(html, include_hrefs=True):
+def tokenize(html, comparator, include_hrefs=True):
     """
     Parse the given HTML and returns token objects (words with attached tags).
 
@@ -588,7 +742,7 @@ def tokenize(html, include_hrefs=True):
     # Then we split the document into text chunks for each tag, word, and end tag:
     chunks = flatten_el(body_el, skip_tag=True, include_hrefs=include_hrefs)
     # Finally re-joining them into token objects:
-    return fixup_chunks(chunks)
+    return fixup_chunks(chunks, comparator)
 
 def parse_html(html, cleanup=True):
     """
@@ -620,6 +774,7 @@ def cleanup_html(html):
     html = _ins_del_re.sub('', html)
     return html
 
+
 def split_trailing_whitespace(word):
     """
     This function takes a word, such as 'test\n\n' and returns ('test','\n\n')
@@ -628,7 +783,7 @@ def split_trailing_whitespace(word):
     return word[0:stripped_length], word[stripped_length:]
 
 
-def fixup_chunks(chunks):
+def fixup_chunks(chunks, comparator):
     """
     This function takes a list of chunks and produces a list of tokens.
     """
@@ -640,15 +795,15 @@ def fixup_chunks(chunks):
             if chunk[0] == 'img':
                 src = chunk[1]
                 tag, trailing_whitespace = split_trailing_whitespace(chunk[2])
-                cur_word = tag_token('img', src, html_repr=tag,
-                                     pre_tags=tag_accum,
-                                     trailing_whitespace=trailing_whitespace)
+                cur_word = ImgTagToken('img', data=src, html_repr=tag,
+                                       comparator=comparator, pre_tags=tag_accum,
+                                       trailing_whitespace=trailing_whitespace)
                 tag_accum = []
                 result.append(cur_word)
 
             elif chunk[0] == 'href':
                 href = chunk[1]
-                cur_word = href_token(href, pre_tags=tag_accum, trailing_whitespace=" ")
+                cur_word = href_token(href, comparator=comparator, pre_tags=tag_accum, trailing_whitespace=" ")
                 tag_accum = []
                 result.append(cur_word)
 
@@ -686,6 +841,7 @@ def fixup_chunks(chunks):
 
     return result
 
+
 def flatten_el(el, include_hrefs, skip_tag=False):
     """ Takes an lxml element el, and generates all the text chunks for
     that tag.  Each start tag is a chunk, each word is a chunk, and each
@@ -695,7 +851,13 @@ def flatten_el(el, include_hrefs, skip_tag=False):
     not returned (just its contents)."""
     if not skip_tag:
         if el.tag == 'img':
-            yield ('img', el.get('src'), start_tag(el))
+            src_array = [el.get('src')]
+            srcset = el.get('srcset')
+            if srcset is not None:
+                srcset_array = srcset.split(',')
+                for src in srcset_array:
+                    src_array.append(src.split(' ')[0])
+            yield ('img', src_array, start_tag(el))
         elif el.tag in undiffable_content_tags:
             element_source = etree.tostring(el, encoding=str, method='html')
             yield ('UNDIFFABLE', element_source)
@@ -815,16 +977,26 @@ class SpacerToken(DiffToken):
 # I had some weird concern that I needed to make this token a single word with
 # no spaces, but now that I know this differ more deeply, this is pointless.
 class ImgTagToken(tag_token):
-    def __new__(cls, tag, data, html_repr, pre_tags=None,
+
+    def __new__(cls, tag, data, html_repr, comparator, pre_tags=None,
                 post_tags=None, trailing_whitespace=""):
-        obj = DiffToken.__new__(cls, "\n\nImg:%s\n\n" % data,
-                            pre_tags=pre_tags,
-                            post_tags=post_tags,
-                            trailing_whitespace=trailing_whitespace)
+        obj = DiffToken.__new__(cls, "\n\nImg:%s\n\n" % str(data),
+                                pre_tags=pre_tags,
+                                post_tags=post_tags,
+                                trailing_whitespace=trailing_whitespace)
         obj.tag = tag
         obj.data = data
         obj.html_repr = html_repr
+        obj.comparator = comparator
         return obj
+
+    def __eq__(self, other):
+        if isinstance(other, ImgTagToken):
+            return StrictUrlRule.compare_array(self.data, other.data, self.comparator)
+        return False
+
+    def __hash__(self):
+        return super().__hash__()
 
 
 def _customize_tokens(tokens):
@@ -1034,15 +1206,7 @@ def _customize_token(token):
     if isinstance(token, href_token):
         return MinimalHrefToken(
             str(token),
-            pre_tags=token.pre_tags,
-            post_tags=token.post_tags,
-            trailing_whitespace=token.trailing_whitespace)
-    elif isinstance(token, tag_token) and token.tag == 'img':
-        # logger.debug('TAG TOKEN: %s' % token)
-        return ImgTagToken(
-            'img',
-            data=token.data,
-            html_repr=token.html_repr,
+            comparator=token.comparator,
             pre_tags=token.pre_tags,
             post_tags=token.post_tags,
             trailing_whitespace=token.trailing_whitespace)
@@ -1161,8 +1325,8 @@ def merge_changes(change_chunks, doc, tag_type='ins'):
         # those tags represent a whole element, not just a start or end tag,
         # so we don't consider them "open" as part of `current_content`.
         if (inline_tag and
-                (inline_tag_name not in undiffable_content_tags) and
-                (inline_tag_name not in empty_tags)):
+            (inline_tag_name not in undiffable_content_tags) and
+            (inline_tag_name not in empty_tags)):
             # FIXME: track the original start tag for when we need to break
             # these elements around boundaries.
             current_content.insert(0, inline_tag_name)
@@ -1437,8 +1601,8 @@ def merge_change_groups(change_chunks, doc, tag_type=None):
         # those tags represent a whole element, not just a start or end tag,
         # so we don't consider them "open" as part of `current_content`.
         if (inline_tag and
-                (inline_tag_name not in undiffable_content_tags) and
-                (inline_tag_name not in empty_tags)):
+            (inline_tag_name not in undiffable_content_tags) and
+            (inline_tag_name not in empty_tags)):
             # FIXME: track the original start tag for when we need to break
             # these elements around boundaries.
             current_content.insert(0, inline_tag_name)
